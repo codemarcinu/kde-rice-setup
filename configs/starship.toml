@@ -1,0 +1,58 @@
+format = """
+$username\
+$hostname\
+$directory\
+$git_branch\
+$git_status\
+$python\
+$rust\
+$golang\
+$nodejs\
+$cmd_duration\
+$line_break\
+$character"""
+
+[character]
+success_symbol = "[❯](bold #cba6f7)"
+error_symbol = "[❯](bold #f38ba8)"
+
+[directory]
+style = "bold #94e2d5"
+truncation_length = 3
+truncate_to_repo = true
+
+[git_branch]
+style = "bold #f5c2e7"
+symbol = " "
+
+[git_status]
+style = "bold #f9e2af"
+
+[cmd_duration]
+min_time = 2000
+style = "bold #6c7086"
+format = "[$duration]($style) "
+
+[python]
+symbol = " "
+style = "bold #f9e2af"
+
+[rust]
+symbol = " "
+style = "bold #f38ba8"
+
+[golang]
+symbol = " "
+style = "bold #89b4fa"
+
+[nodejs]
+symbol = " "
+style = "bold #a6e3a1"
+
+[username]
+show_always = false
+style_user = "bold #cdd6f4"
+
+[hostname]
+ssh_only = true
+style = "bold #6c7086"
