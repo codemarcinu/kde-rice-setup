@@ -158,7 +158,24 @@ install_widget "$WIDGET_DIR/plasmusic.plasmoid"        "PlasMusic Toolbar"
 # --- Motywy KDE ---
 echo ""
 info "Zastosowanie motywow KDE..."
-plasma-apply-desktoptheme Qogir
+# Utwórz Qogir-dark jako samodzielny motyw (upstream nie ma metadata)
+mkdir -p ~/.local/share/plasma/desktoptheme/Qogir-dark
+cp -r /usr/share/plasma/desktoptheme/Qogir/* ~/.local/share/plasma/desktoptheme/Qogir-dark/
+cp -r /usr/share/plasma/desktoptheme/Qogir-dark/* ~/.local/share/plasma/desktoptheme/Qogir-dark/ 2>/dev/null || true
+cat > ~/.local/share/plasma/desktoptheme/Qogir-dark/metadata.json <<'METAEOF'
+{
+    "KPlugin": {
+        "Authors": [{"Email": "vinceliuice@hotmail.com", "Name": "Vinceliuice"}],
+        "Description": "Qogir dark theme for plasma",
+        "EnabledByDefault": true,
+        "Id": "Qogir-dark",
+        "License": "GPL 3.0",
+        "Name": "Qogir-dark",
+        "Version": "0.1"
+    }
+}
+METAEOF
+plasma-apply-desktoptheme Qogir-dark
 plasma-apply-colorscheme QogirManjaroDark
 /usr/lib/plasma-changeicons Papirus-Dark 2>/dev/null || warn "Nie udalo sie zmienic ikon"
 
