@@ -501,6 +501,194 @@ cmd_cursor() {
 }
 
 # ============================================================
+# IKONY
+# ============================================================
+cmd_icons() {
+    case "$1" in
+        desktop)
+            local size="${2:-48}"
+            kwriteconfig6 --file kdeglobals --group DesktopIcons --key Size "$size"
+            ok "Ikony pulpitu: ${size}px"
+            info "Wyloguj/zaloguj aby zastosowac"
+            ;;
+        panel)
+            local size="${2:-22}"
+            kwriteconfig6 --file kdeglobals --group PanelIcons --key Size "$size"
+            ok "Ikony panelu: ${size}px"
+            info "Wyloguj/zaloguj aby zastosowac"
+            ;;
+        toolbar)
+            local size="${2:-22}"
+            kwriteconfig6 --file kdeglobals --group ToolbarIcons --key Size "$size"
+            kwriteconfig6 --file kdeglobals --group MainToolbarIcons --key Size "$size"
+            ok "Ikony paska narzedzi: ${size}px"
+            ;;
+        small)
+            local size="${2:-16}"
+            kwriteconfig6 --file kdeglobals --group SmallIcons --key Size "$size"
+            ok "Male ikony: ${size}px"
+            ;;
+        dialog)
+            local size="${2:-32}"
+            kwriteconfig6 --file kdeglobals --group DialogIcons --key Size "$size"
+            ok "Ikony dialogow: ${size}px"
+            ;;
+        all)
+            local size="${2:-22}"
+            cmd_icons desktop "$((size * 2))"
+            cmd_icons panel "$size"
+            cmd_icons toolbar "$size"
+            cmd_icons small "$((size - 6 > 12 ? size - 6 : 12))"
+            cmd_icons dialog "$((size + 10))"
+            ;;
+        info)
+            echo -e "${BOLD}Rozmiary ikon:${NC}"
+            echo "  Pulpit:         $(kreadconfig6 --file kdeglobals --group DesktopIcons --key Size)px"
+            echo "  Panel:          $(kreadconfig6 --file kdeglobals --group PanelIcons --key Size)px"
+            echo "  Pasek narzedzi: $(kreadconfig6 --file kdeglobals --group ToolbarIcons --key Size)px"
+            echo "  Male:           $(kreadconfig6 --file kdeglobals --group SmallIcons --key Size)px"
+            echo "  Dialogi:        $(kreadconfig6 --file kdeglobals --group DialogIcons --key Size)px"
+            ;;
+        *)
+            echo "Uzycie: rice-manage.sh icons <desktop|panel|toolbar|small|dialog|all|info> [px]"
+            echo ""
+            echo "  desktop [px]   — ikony na pulpicie (domyslnie 48)"
+            echo "  panel [px]     — ikony w panelu (domyslnie 22)"
+            echo "  toolbar [px]   — ikony paska narzedzi (domyslnie 22)"
+            echo "  small [px]     — male ikony w menu (domyslnie 16)"
+            echo "  dialog [px]    — ikony w dialogach (domyslnie 32)"
+            echo "  all [px]       — ustaw wszystkie proporcjonalnie"
+            echo "  info           — pokaz aktualne rozmiary"
+            ;;
+    esac
+}
+
+# ============================================================
+# PRZEZROCZYSTOSC
+# ============================================================
+cmd_transparency() {
+    case "$1" in
+        panel)
+            local val="${2:-0.8}"
+            # Panel opacity via D-Bus (0.0 = fully transparent, 1.0 = opaque)
+            qdbus6 org.kde.plasmashell /PlasmaShell org.kde.PlasmaShell.evaluateScript "
+            var panels = panels();
+            for (var i = 0; i < panels.length; i++) {
+                panels[i].opacity = $val;
+            }
+            " 2>/dev/null
+            # Also set in plasmashellrc for persistence
+            kwriteconfig6 --file plasmashellrc --group PlasmaViews --group "Panel 23" --key panelOpacity 2
+            ok "Przezroczystosc panelu: $val"
+            ;;
+        dock)
+            local val="${2:-0.8}"
+            kwriteconfig6 --file plasmashellrc --group PlasmaViews --group "Panel 54" --key panelOpacity 2
+            ok "Przezroczystosc docka: translucent"
+            info "Restart plasmashell wymagany (rice-manage.sh restart)"
+            ;;
+        windows)
+            local val="${2:-85}"
+            # KWin active/inactive window opacity via window rules
+            kwriteconfig6 --file kwinrc --group Plugins --key forceblurEnabled true
+            kwriteconfig6 --file kwinrc --group Effect-blur --key BlurStrength 8
+            info "Przezroczystosc okien wymaga regul KWin lub ustawien per-aplikacja"
+            info "Uzyj: Ustawienia systemowe > Reguly okien > Dodaj regule z 'Opacity'"
+            info "Lub ustaw per-terminal: rice-manage.sh terminal opacity $val"
+            ;;
+        kitty)
+            local val="${2:-0.85}"
+            cmd_terminal opacity "$val"
+            ;;
+        info)
+            echo -e "${BOLD}Przezroczystosc:${NC}"
+            local panel_op
+            panel_op=$(kreadconfig6 --file plasmashellrc --group PlasmaViews --group "Panel 23" --key panelOpacity)
+            case "$panel_op" in
+                0) echo "  Panel:   adaptive" ;;
+                1) echo "  Panel:   opaque" ;;
+                2) echo "  Panel:   translucent" ;;
+                *) echo "  Panel:   $panel_op" ;;
+            esac
+            if [[ -f ~/.config/kitty/kitty.conf ]]; then
+                echo "  Kitty:   $(grep '^background_opacity' ~/.config/kitty/kitty.conf 2>/dev/null | awk '{print $2}')"
+            fi
+            ;;
+        *)
+            echo "Uzycie: rice-manage.sh transparency <panel|dock|kitty|windows|info>"
+            echo ""
+            echo "  panel [0.0-1.0]    — przezroczystosc gornego panelu"
+            echo "  dock [0.0-1.0]     — przezroczystosc docka"
+            echo "  kitty [0.0-1.0]    — przezroczystosc terminala (domyslnie 0.85)"
+            echo "  windows            — informacje o przezroczystosci okien"
+            echo "  info               — pokaz aktualne ustawienia"
+            ;;
+    esac
+}
+
+# ============================================================
+# ANIMACJE
+# ============================================================
+cmd_animations() {
+    case "$1" in
+        speed)
+            local val="${2:-0.5}"
+            kwriteconfig6 --file kdeglobals --group KDE --key AnimationDurationFactor "$val"
+            ok "Szybkosc animacji: $val (0=natychmiast, 1=normalna)"
+            ;;
+        off)
+            kwriteconfig6 --file kdeglobals --group KDE --key AnimationDurationFactor 0
+            ok "Animacje wylaczone"
+            ;;
+        info)
+            local val
+            val=$(kreadconfig6 --file kdeglobals --group KDE --key AnimationDurationFactor)
+            echo "Szybkosc animacji: ${val:-1} (0=natychmiast, 1=normalna)"
+            ;;
+        *)
+            echo "Uzycie: rice-manage.sh animations <speed|off|info>"
+            echo ""
+            echo "  speed [0.0-1.0]  — ustaw szybkosc (domyslnie 0.5)"
+            echo "  off              — wylacz animacje"
+            echo "  info             — pokaz aktualne"
+            ;;
+    esac
+}
+
+# ============================================================
+# PRZYCISKI OKIEN
+# ============================================================
+cmd_buttons() {
+    case "$1" in
+        mac|left)
+            kwriteconfig6 --file kwinrc --group org.kde.kdecoration2 --key ButtonsOnLeft "XAI"
+            kwriteconfig6 --file kwinrc --group org.kde.kdecoration2 --key ButtonsOnRight ""
+            qdbus6 org.kde.KWin /KWin reconfigure 2>/dev/null
+            ok "Przyciski okien: styl macOS (zamknij, maks, mini — po lewej)"
+            ;;
+        windows|right)
+            kwriteconfig6 --file kwinrc --group org.kde.kdecoration2 --key ButtonsOnLeft "M"
+            kwriteconfig6 --file kwinrc --group org.kde.kdecoration2 --key ButtonsOnRight "IAX"
+            qdbus6 org.kde.KWin /KWin reconfigure 2>/dev/null
+            ok "Przyciski okien: styl Windows (mini, maks, zamknij — po prawej)"
+            ;;
+        info)
+            echo -e "${BOLD}Przyciski okien:${NC}"
+            echo "  Lewa:  $(kreadconfig6 --file kwinrc --group org.kde.kdecoration2 --key ButtonsOnLeft)"
+            echo "  Prawa: $(kreadconfig6 --file kwinrc --group org.kde.kdecoration2 --key ButtonsOnRight)"
+            echo "  (M=menu, X=zamknij, A=maksymalizuj, I=minimalizuj)"
+            ;;
+        *)
+            echo "Uzycie: rice-manage.sh buttons <mac|windows|info>"
+            echo ""
+            echo "  mac / left      — przyciski po lewej (styl macOS)"
+            echo "  windows / right — przyciski po prawej (styl Windows)"
+            echo "  info            — pokaz aktualny uklad"
+            ;;
+    esac
+}
+
+# ============================================================
 # RESTART / BACKUP / EXPORT
 # ============================================================
 cmd_restart() {
@@ -561,6 +749,14 @@ cmd_status() {
     echo ""
     cmd_effects status
     echo ""
+    cmd_icons info
+    echo ""
+    cmd_transparency info
+    echo ""
+    cmd_animations info
+    echo ""
+    cmd_buttons info
+    echo ""
     cmd_terminal info
     echo ""
     cmd_dock list
@@ -587,7 +783,13 @@ cmd_help() {
     echo ""
     echo -e "  ${CYAN}Efekty:${NC}"
     echo "    effects <blur|corners|dim|gaps|status>     — efekty KWin"
+    echo "    transparency <panel|dock|kitty|info>       — przezroczystosc"
+    echo "    animations <speed|off|info>                — szybkosc animacji"
     echo "    desktops <set|info>                        — pulpity wirtualne"
+    echo ""
+    echo -e "  ${CYAN}Ikony i okna:${NC}"
+    echo "    icons <desktop|panel|toolbar|all|info>     — rozmiary ikon"
+    echo "    buttons <mac|windows|info>                 — przyciski okien"
     echo ""
     echo -e "  ${CYAN}Terminal:${NC}"
     echo "    terminal <opacity|padding|info>            — ustawienia kitty"
@@ -604,6 +806,10 @@ cmd_help() {
     echo "    ./rice-manage.sh dock add brave-browser.desktop"
     echo "    ./rice-manage.sh panel thickness dock 56"
     echo "    ./rice-manage.sh terminal opacity 0.85"
+    echo "    ./rice-manage.sh icons all 24"
+    echo "    ./rice-manage.sh transparency panel 0.7"
+    echo "    ./rice-manage.sh buttons mac"
+    echo "    ./rice-manage.sh animations speed 0.3"
     echo ""
 }
 
@@ -619,8 +825,12 @@ case "${1:-help}" in
     fonts)      shift; cmd_fonts "$@" ;;
     terminal)   shift; cmd_terminal "$@" ;;
     desktops)   shift; cmd_desktops "$@" ;;
-    cursor)     shift; cmd_cursor "$@" ;;
-    restart)    shift; cmd_restart "$@" ;;
+    cursor)       shift; cmd_cursor "$@" ;;
+    icons)        shift; cmd_icons "$@" ;;
+    transparency) shift; cmd_transparency "$@" ;;
+    animations)   shift; cmd_animations "$@" ;;
+    buttons)      shift; cmd_buttons "$@" ;;
+    restart)      shift; cmd_restart "$@" ;;
     backup)     shift; cmd_backup "$@" ;;
     export)     shift; cmd_export "$@" ;;
     status)     shift; cmd_status "$@" ;;
