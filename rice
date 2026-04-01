@@ -89,11 +89,18 @@ cmd_theme() {
             _kwrite --file kdeglobals --group KDE --key widgetStyle "kvantum"
             mkdir -p ~/.config/Kvantum
             echo -e "[General]\ntheme=Qogir-dark" > ~/.config/Kvantum/kvantum.kvconfig
-            find ~/.local/share/plasma/desktoptheme/Qogir-dark -name '*.svg' -exec sed -i \
-                -e 's/color:#eff0f1/color:#282a33/g' -e 's/stop-color:#eff0f1/stop-color:#282a33/g' \
-                -e 's/color:#fcfcfc/color:#30333d/g'  -e 's/stop-color:#fcfcfc/stop-color:#30333d/g' \
-                -e 's/color:#31363b/color:#d3dae3/g'  -e 's/stop-color:#31363b/stop-color:#d3dae3/g' \
-                {} + 2>/dev/null || true
+            local theme_dir=~/.local/share/plasma/desktoptheme/Qogir-dark
+            local backup_dir="${theme_dir}-rice-backup"
+            # Backup originals once; restore before applying for idempotency
+            [[ -d "$theme_dir" ]] && {
+                [[ ! -d "$backup_dir" ]] && cp -a "$theme_dir" "$backup_dir"
+                cp -a "$backup_dir"/. "$theme_dir"
+                find "$theme_dir" -name '*.svg' -exec sed -i \
+                    -e 's/color:#eff0f1/color:#282a33/g' -e 's/stop-color:#eff0f1/stop-color:#282a33/g' \
+                    -e 's/color:#fcfcfc/color:#30333d/g'  -e 's/stop-color:#fcfcfc/stop-color:#30333d/g' \
+                    -e 's/color:#31363b/color:#d3dae3/g'  -e 's/stop-color:#31363b/stop-color:#d3dae3/g' \
+                    {} + 2>/dev/null || true
+            }
             qdbus6 org.kde.KWin /KWin reconfigure 2>/dev/null || true
             ok "Motyw ciemny (Qogir-dark)"
             ;;
@@ -122,7 +129,36 @@ cmd_theme() {
 
 # ── Panel ───────────────────────────────────────────────────
 _panel_location() { [[ "${1:-dock}" == "top" ]] && echo "top" || echo "bottom"; }
-_panel_id()       { [[ "${1:-dock}" == "top" ]] && echo 23 || echo 54; }
+
+_find_panel_id() {
+    local target cfg=~/.config/plasma-org.kde.plasma.desktop-appletsrc
+    case "${1:-bottom}" in top) target=3 ;; *) target=4 ;; esac
+    awk -v t="$target" 'BEGIN { loc="location=" t }
+        match($0, /^\[Containments\]\[([0-9]+)\]$/, m) { id=m[1]; panel=0 }
+        /^plugin=org\.kde\.panel$/ { panel=1 }
+        panel && $0 == loc { print id; exit }
+    ' "$cfg"
+}
+
+_panel_id() {
+    local loc
+    case "${1:-dock}" in top) loc="top" ;; *) loc="bottom" ;; esac
+    local id; id=$(_find_panel_id "$loc")
+    [[ -z "$id" ]] && { fail "Nie znaleziono panelu: $loc"; return 1; }
+    echo "$id"
+}
+
+_is_num() { [[ "$1" =~ ^[0-9]+(\.[0-9]+)?$ ]]; }
+
+_dock_launchers() {
+    local panel_id cfg=~/.config/plasma-org.kde.plasma.desktop-appletsrc
+    panel_id=$(_find_panel_id bottom) || return 1
+    awk -v pid="$panel_id" '
+        $0 ~ "^\\[Containments\\]\\[" pid "\\]" { in_panel=1 }
+        /^\[/ && $0 !~ "^\\[Containments\\]\\[" pid "\\]" { in_panel=0 }
+        in_panel && /^launchers=/ { sub(/^launchers=/, ""); print; exit }
+    ' "$cfg"
+}
 
 cmd_panel() {
     case "${1:-help}" in
@@ -131,7 +167,8 @@ cmd_panel() {
             case "$val" in
                 adaptive|auto) val=0 ;; opaque|solid) val=1 ;; translucent) val=2 ;;
             esac
-            _kwrite --file plasmashellrc --group PlasmaViews --group "Panel 23" --key panelOpacity "$val"
+            local pid; pid=$(_panel_id top) || return 1
+            _kwrite --file plasmashellrc --group PlasmaViews --group "Panel $pid" --key panelOpacity "$val"
             ok "Panel opacity: $val (0=adaptive 1=opaque 2=translucent)"
             info "Restart wymagany: rice restart"
             ;;
@@ -182,30 +219,45 @@ cmd_dock() {
         add)
             [[ -z "${2:-}" ]] && { echo "Uzycie: rice dock add <app.desktop>"; return 1; }
             [[ ! -f "/usr/share/applications/$2" ]] && { fail "Nie znaleziono: $2"; return 1; }
-            local current
-            current=$(grep -A1 '\[Containments\]\[54\]\[Applets\]\[55\]\[Configuration\]\[General\]' "$cfg" | grep launchers= | sed 's/launchers=//')
+            local current; current=$(_dock_launchers)
+            [[ -z "$current" ]] && { fail "Nie znaleziono launchera w konfiguracji"; return 1; }
             echo "$current" | grep -q "$2" && { warn "$2 juz w docku"; return 0; }
-            sed -i "s|launchers=.*|launchers=${current},applications:${2}|" "$cfg"
+            sed -i "0,/^launchers=/{s|^launchers=.*|launchers=${current},applications:${2}|}" "$cfg"
             ok "Dodano: $2"
             info "Restart wymagany: rice restart"
             ;;
         remove)
             [[ -z "${2:-}" ]] && { echo "Uzycie: rice dock remove <app.desktop>"; return 1; }
-            sed -i "s|,applications:${2}||g; s|applications:${2},||g; s|applications:${2}||g" "$cfg"
+            sed -i "0,/^launchers=/{s|,applications:${2}||; s|applications:${2},||; s|applications:${2}||}" "$cfg"
             ok "Usunieto: $2"
             info "Restart wymagany: rice restart"
             ;;
         list)
             echo -e "${BOLD}Dock:${NC}"
-            grep -A1 '\[Containments\]\[54\]\[Applets\]\[55\]\[Configuration\]\[General\]' "$cfg" \
-                | grep launchers= | sed 's/launchers=//' | tr ',' '\n' | while read -r l; do
+            _dock_launchers | tr ',' '\n' | while read -r l; do
                 [[ -n "$l" ]] && echo "  $l"
             done
+            ;;
+        super)
+            cmd_panel autohide dock true
+            _kwrite --file kwinrc --group ModifierOnlyShortcuts --key Meta \
+                "org.kde.plasmashell,/PlasmaShell,org.kde.PlasmaShell,evaluateScript,var p=panels();for(var i=0;i<p.length;i++)if(p[i].location=='bottom'){var h=p[i].hiding;p[i].hiding=h=='autohide'?'none':'autohide'}"
+            qdbus6 org.kde.KWin /KWin reconfigure 2>/dev/null || true
+            ok "Super = toggle dock"
+            warn "Super nie otwiera juz launchera — rice dock super-off aby przywrocic"
+            ;;
+        super-off)
+            _kwrite --file kwinrc --group ModifierOnlyShortcuts --key Meta \
+                "org.kde.plasmashell,/PlasmaShell,org.kde.PlasmaShell,activateLauncherMenu"
+            qdbus6 org.kde.KWin /KWin reconfigure 2>/dev/null || true
+            ok "Super = launcher (domyslny)"
             ;;
         help|*) cat <<'EOF'
   dock add <app.desktop>      dodaj do docka
   dock remove <app.desktop>   usun z docka
   dock list                   pokaz zawartosc
+  dock super                  Super = toggle dock
+  dock super-off              przywroc Super = launcher
 EOF
             ;;
     esac
@@ -216,6 +268,7 @@ cmd_effects() {
     case "${1:-help}" in
         blur)
             local s="${2:-8}"
+            _is_num "$s" || { fail "Wartosc musi byc liczba: $s"; return 1; }
             _kwrite --file kwinrc --group Plugins --key blurEnabled true
             _kwrite --file kwinrc --group Effect-blur --key BlurStrength "$s"
             _kwrite --file kwinrc --group Effect-blur --key NoiseStrength 0
@@ -229,6 +282,7 @@ cmd_effects() {
             ;;
         corners)
             local s="${2:-10}"
+            _is_num "$s" || { fail "Wartosc musi byc liczba: $s"; return 1; }
             _kwrite --file kwinrc --group Plugins --key kwin_effect_rounded_cornersEnabled true
             _kwrite --file kwinrc --group Effect-kwin_effect_rounded_corners --key Size "$s"
             qdbus6 org.kde.KWin /KWin reconfigure 2>/dev/null || true
@@ -241,6 +295,7 @@ cmd_effects() {
             ;;
         dim)
             local s="${2:-15}"
+            _is_num "$s" || { fail "Wartosc musi byc liczba: $s"; return 1; }
             _kwrite --file kwinrc --group Plugins --key diminactiveEnabled true
             _kwrite --file kwinrc --group Effect-diminactive --key Strength "$s"
             qdbus6 org.kde.KWin /KWin reconfigure 2>/dev/null || true
@@ -317,12 +372,14 @@ EOF
 cmd_transparency() {
     case "${1:-help}" in
         panel)
-            _kwrite --file plasmashellrc --group PlasmaViews --group "Panel 23" --key panelOpacity 2
+            local pid; pid=$(_panel_id top) || return 1
+            _kwrite --file plasmashellrc --group PlasmaViews --group "Panel $pid" --key panelOpacity 2
             ok "Panel: translucent"
             info "Restart wymagany: rice restart"
             ;;
         dock)
-            _kwrite --file plasmashellrc --group PlasmaViews --group "Panel 54" --key panelOpacity 2
+            local pid; pid=$(_panel_id dock) || return 1
+            _kwrite --file plasmashellrc --group PlasmaViews --group "Panel $pid" --key panelOpacity 2
             ok "Dock: translucent"
             info "Restart wymagany: rice restart"
             ;;
@@ -334,7 +391,8 @@ cmd_transparency() {
             ;;
         info)
             echo -e "${BOLD}Przezroczystosc:${NC}"
-            local p; p=$(_kread --file plasmashellrc --group PlasmaViews --group "Panel 23" --key panelOpacity)
+            local pid; pid=$(_panel_id top) || return 1
+            local p; p=$(_kread --file plasmashellrc --group PlasmaViews --group "Panel $pid" --key panelOpacity)
             case "$p" in 0) p="adaptive" ;; 1) p="opaque" ;; 2) p="translucent" ;; esac
             echo "  Panel:  $p"
             [[ -f ~/.config/kitty/kitty.conf ]] && echo "  Kitty:  $(grep '^background_opacity' ~/.config/kitty/kitty.conf | awk '{print $2}')"
@@ -409,6 +467,81 @@ cmd_terminal() {
   terminal opacity [0-1]     przezroczystosc (domyslnie 0.92)
   terminal padding [px]      padding (domyslnie "8 12")
   terminal info              pokaz konfiguracje
+EOF
+            ;;
+    esac
+}
+
+# ── Monitor (system stats in panel) ────────────────────────
+cmd_monitor() {
+    case "${1:-help}" in
+        add)
+            _dbus_panel "
+            var p = panels();
+            for (var i = 0; i < p.length; i++) {
+                if (p[i].location == 'top') {
+                    var cpu = p[i].addWidget('org.kde.plasma.systemmonitor');
+                    cpu.currentConfigGroup = ['Appearance'];
+                    cpu.writeConfig('chartFace', 'org.kde.ksysguard.textonly');
+                    cpu.writeConfig('title', 'CPU');
+                    cpu.currentConfigGroup = ['Sensors'];
+                    cpu.writeConfig('highPrioritySensorIds', '[\"cpu/all/usage\"]');
+                    cpu.writeConfig('totalSensors', '[\"cpu/all/usage\"]');
+                    cpu.currentConfigGroup = ['SensorColors'];
+                    cpu.writeConfig('cpu/all/usage', '85,170,255');
+
+                    var ram = p[i].addWidget('org.kde.plasma.systemmonitor');
+                    ram.currentConfigGroup = ['Appearance'];
+                    ram.writeConfig('chartFace', 'org.kde.ksysguard.textonly');
+                    ram.writeConfig('title', 'RAM');
+                    ram.currentConfigGroup = ['Sensors'];
+                    ram.writeConfig('highPrioritySensorIds', '[\"memory/physical/usedPercent\"]');
+                    ram.writeConfig('totalSensors', '[\"memory/physical/usedPercent\"]');
+                    ram.currentConfigGroup = ['SensorColors'];
+                    ram.writeConfig('memory/physical/usedPercent', '100,220,100');
+
+                    var vram = p[i].addWidget('org.kde.plasma.systemmonitor');
+                    vram.currentConfigGroup = ['Appearance'];
+                    vram.writeConfig('chartFace', 'org.kde.ksysguard.textonly');
+                    vram.writeConfig('title', 'VRAM');
+                    vram.currentConfigGroup = ['Sensors'];
+                    vram.writeConfig('highPrioritySensorIds', '[\"gpu/gpu1/usedVram\"]');
+                    vram.writeConfig('totalSensors', '[\"gpu/gpu1/totalVram\"]');
+                    vram.currentConfigGroup = ['SensorColors'];
+                    vram.writeConfig('gpu/gpu1/usedVram', '255,170,85');
+                }
+            }"
+            ok "Monitory: CPU, RAM, VRAM dodane do gornego panelu"
+            ;;
+        remove)
+            _dbus_panel "
+            var p = panels();
+            for (var i = 0; i < p.length; i++) {
+                if (p[i].location == 'top') {
+                    var ws = p[i].widgets('org.kde.plasma.systemmonitor');
+                    for (var j = ws.length - 1; j >= 0; j--)
+                        ws[j].remove();
+                }
+            }"
+            ok "Monitory usuniete z gornego panelu"
+            ;;
+        info)
+            echo -e "${BOLD}Monitory (gorny panel):${NC}"
+            local cfg=~/.config/plasma-org.kde.plasma.desktop-appletsrc
+            local panel_id; panel_id=$(_find_panel_id top)
+            if [[ -n "$panel_id" ]]; then
+                grep -A5 "Containments\]\[$panel_id\].*systemmonitor" "$cfg" 2>/dev/null \
+                    | grep -oP 'title=\K.*' | while read -r t; do echo "  $t"; done
+                [[ $(grep -c "systemmonitor" <<< "$(grep "Containments\]\[$panel_id\]" "$cfg" 2>/dev/null)") -eq 0 ]] \
+                    && echo "  (brak)"
+            else
+                echo "  (brak gornego panelu)"
+            fi
+            ;;
+        help|*) cat <<'EOF'
+  monitor add               dodaj CPU, RAM, VRAM do gornego panelu
+  monitor remove            usun monitory z gornego panelu
+  monitor info              pokaz dodane monitory
 EOF
             ;;
     esac
@@ -903,7 +1036,7 @@ cmd_restart() {
     info "Restartowanie plasmashell..."
     kquitapp6 plasmashell 2>/dev/null || true
     sleep 2
-    kstart plasmashell 2>/dev/null &
+    plasmashell 2>/dev/null &
     sleep 4
     _dbus_panel "
     var p = panels();
@@ -946,7 +1079,7 @@ cmd_install_cli() {
     local comp_dir=~/.config/fish/completions
     mkdir -p "$comp_dir"
     cat > "$comp_dir/rice.fish" <<'FISHEOF'
-set -l commands wallpaper theme panel dock effects icons transparency fonts terminal cursor desktops animations buttons nightcolor hotcorners shortcuts clipboard touchpad splash lockscreen preset profile restart backup export status help
+set -l commands wallpaper theme panel dock effects icons transparency fonts terminal monitor cursor desktops animations buttons nightcolor hotcorners shortcuts clipboard touchpad splash lockscreen preset profile restart backup export status help
 
 complete -c rice -f
 complete -c rice -n "not __fish_seen_subcommand_from $commands" -a "$commands"
@@ -954,7 +1087,8 @@ complete -c rice -n "not __fish_seen_subcommand_from $commands" -a "$commands"
 complete -c rice -n "__fish_seen_subcommand_from wallpaper" -a "set darken lighten blur reset"
 complete -c rice -n "__fish_seen_subcommand_from theme" -a "dark light info"
 complete -c rice -n "__fish_seen_subcommand_from panel" -a "opacity thickness floating autohide height"
-complete -c rice -n "__fish_seen_subcommand_from dock" -a "add remove list"
+complete -c rice -n "__fish_seen_subcommand_from dock" -a "add remove list super super-off"
+complete -c rice -n "__fish_seen_subcommand_from monitor" -a "add remove info"
 complete -c rice -n "__fish_seen_subcommand_from effects" -a "blur blur-off corners corners-off dim dim-off status"
 complete -c rice -n "__fish_seen_subcommand_from icons" -a "desktop panel toolbar small dialog all info"
 complete -c rice -n "__fish_seen_subcommand_from transparency" -a "panel dock kitty info"
@@ -1017,7 +1151,8 @@ cmd_help() {
     echo ""
     echo -e "  ${CYAN}Panele${NC}"
     echo "    panel       opacity, grubosc, floating, autohide, wysokosc"
-    echo "    dock        aplikacje w docku (add/remove/list)"
+    echo "    dock        aplikacje w docku (add/remove/list/super)"
+    echo "    monitor     CPU, RAM, VRAM w gornym panelu"
     echo ""
     echo -e "  ${CYAN}Efekty${NC}"
     echo "    effects     blur, zaokraglone rogi, dim inactive"
@@ -1037,6 +1172,7 @@ cmd_help() {
     echo ""
     echo -e "  ${CYAN}Terminal${NC}"
     echo "    terminal    opacity, padding kitty"
+    echo "    monitor     CPU/RAM/VRAM w gornym panelu (add/remove)"
     echo ""
     echo -e "  ${CYAN}Presety${NC}"
     echo "    preset minimal|comfy|heavy"
@@ -1075,6 +1211,7 @@ case "${1:-help}" in
     transparency) shift; cmd_transparency "$@" ;;
     fonts)        shift; cmd_fonts "$@" ;;
     terminal)     shift; cmd_terminal "$@" ;;
+    monitor)      shift; cmd_monitor "$@" ;;
     cursor)       shift; cmd_cursor "$@" ;;
     desktops)     shift; cmd_desktops "$@" ;;
     animations)   shift; cmd_animations "$@" ;;
