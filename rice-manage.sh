@@ -156,12 +156,44 @@ cmd_panel() {
             ok "Panel $panel floating: $val"
             info "Restart plasmashell wymagany (rice-manage.sh restart)"
             ;;
+        autohide)
+            local panel="${2:-dock}"
+            local state="${3:-true}"
+            local hiding="autohide"
+            [[ "$state" == "false" || "$state" == "off" || "$state" == "0" ]] && hiding="none"
+            local location="bottom"
+            [[ "$panel" == "top" ]] && location="top"
+            qdbus6 org.kde.plasmashell /PlasmaShell org.kde.PlasmaShell.evaluateScript "
+            var panels = panels();
+            for (var i = 0; i < panels.length; i++) {
+                if (panels[i].location == '$location') {
+                    panels[i].hiding = '$hiding';
+                }
+            }" 2>/dev/null
+            ok "Panel $panel autohide: $hiding"
+            ;;
+        height)
+            local panel="${2:-dock}"
+            local size="${3:-48}"
+            local location="bottom"
+            [[ "$panel" == "top" ]] && location="top"
+            qdbus6 org.kde.plasmashell /PlasmaShell org.kde.PlasmaShell.evaluateScript "
+            var panels = panels();
+            for (var i = 0; i < panels.length; i++) {
+                if (panels[i].location == '$location') {
+                    panels[i].height = $size;
+                }
+            }" 2>/dev/null
+            ok "Panel $panel height: ${size}px"
+            ;;
         *)
-            echo "Uzycie: rice-manage.sh panel <opacity|thickness|floating>"
+            echo "Uzycie: rice-manage.sh panel <opacity|thickness|floating|autohide|height>"
             echo ""
             echo "  opacity <adaptive|opaque|translucent>"
             echo "  thickness <top|dock> <piksele>"
             echo "  floating <top|dock> <true|false>"
+            echo "  autohide <top|dock> <true|false>   — auto-ukrywanie"
+            echo "  height <top|dock> <piksele>        — wysokosc (live)"
             ;;
     esac
 }
