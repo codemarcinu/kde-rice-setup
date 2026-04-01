@@ -1,0 +1,732 @@
+#!/bin/bash
+# rice — KDE Plasma 6 rice management CLI
+# https://github.com/codemarcinu/kde-rice-setup
+
+set -euo pipefail
+
+VERSION="2.0.0"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# ── Colors ──────────────────────────────────────────────────
+RED='\033[0;31m'    GREEN='\033[0;32m'  YELLOW='\033[1;33m'
+BLUE='\033[0;34m'   CYAN='\033[0;36m'   MAGENTA='\033[0;35m'
+BOLD='\033[1m'      DIM='\033[2m'       NC='\033[0m'
+
+info()  { echo -e "  ${BLUE}→${NC} $1"; }
+ok()    { echo -e "  ${GREEN}✓${NC} $1"; }
+warn()  { echo -e "  ${YELLOW}!${NC} $1"; }
+fail()  { echo -e "  ${RED}✗${NC} $1"; }
+
+_dbus_panel() {
+    qdbus6 org.kde.plasmashell /PlasmaShell org.kde.PlasmaShell.evaluateScript "$1" 2>/dev/null
+}
+
+_kwrite() { kwriteconfig6 "$@"; }
+_kread()  { kreadconfig6 "$@"; }
+
+# ── Wallpaper ───────────────────────────────────────────────
+cmd_wallpaper() {
+    case "${1:-help}" in
+        set)
+            [[ -z "${2:-}" ]] && { echo "Uzycie: rice wallpaper set <plik>"; return 1; }
+            [[ ! -f "$2" ]] && { fail "Plik nie istnieje: $2"; return 1; }
+            mkdir -p ~/.local/share/wallpapers
+            cp "$2" ~/.local/share/wallpapers/rice-wallpaper.png
+            _dbus_panel "
+            var d = desktops();
+            for (var i = 0; i < d.length; i++) {
+                d[i].wallpaperPlugin = 'org.kde.image';
+                d[i].currentConfigGroup = ['Wallpaper','org.kde.image','General'];
+                d[i].writeConfig('Image','file://$HOME/.local/share/wallpapers/rice-wallpaper.png');
+            }"
+            ok "Tapeta: $2"
+            ;;
+        darken)
+            local f="${HOME}/.local/share/wallpapers/rice-wallpaper.png" pct="${2:-10}"
+            [[ ! -f "$f" ]] && { fail "Brak tapety"; return 1; }
+            magick "$f" -modulate $((100-pct)),100,100 "$f"
+            cmd_wallpaper set "$f"
+            ok "Przyciemniono o ${pct}%"
+            ;;
+        lighten)
+            local f="${HOME}/.local/share/wallpapers/rice-wallpaper.png" pct="${2:-10}"
+            [[ ! -f "$f" ]] && { fail "Brak tapety"; return 1; }
+            magick "$f" -modulate $((100+pct)),100,100 "$f"
+            cmd_wallpaper set "$f"
+            ok "Rozjasniono o ${pct}%"
+            ;;
+        blur)
+            local f="${HOME}/.local/share/wallpapers/rice-wallpaper.png" r="${2:-5}"
+            [[ ! -f "$f" ]] && { fail "Brak tapety"; return 1; }
+            magick "$f" -blur "0x${r}" "$f"
+            cmd_wallpaper set "$f"
+            ok "Blur radius=${r}"
+            ;;
+        reset)
+            [[ -f "$SCRIPT_DIR/wallpaper/wallpaper.png" ]] \
+                && cmd_wallpaper set "$SCRIPT_DIR/wallpaper/wallpaper.png" \
+                || fail "Brak domyslnej tapety"
+            ;;
+        help|*) cat <<'EOF'
+  wallpaper set <plik>        ustaw tapete
+  wallpaper darken [%]        przyciemnij (domyslnie 10%)
+  wallpaper lighten [%]       rozjasnij (domyslnie 10%)
+  wallpaper blur [radius]     rozmyj (domyslnie 5)
+  wallpaper reset             przywroc domyslna
+EOF
+            ;;
+    esac
+}
+
+# ── Theme ───────────────────────────────────────────────────
+cmd_theme() {
+    case "${1:-help}" in
+        dark)
+            plasma-apply-desktoptheme Qogir-dark
+            plasma-apply-colorscheme QogirManjaroDark
+            /usr/lib/plasma-changeicons Papirus-Dark 2>/dev/null || true
+            _kwrite --file kwinrc --group org.kde.kdecoration2 --key theme "__aurorae__svg__Qogir-dark"
+            _kwrite --file kdeglobals --group KDE --key widgetStyle "kvantum"
+            mkdir -p ~/.config/Kvantum
+            echo -e "[General]\ntheme=Qogir-dark" > ~/.config/Kvantum/kvantum.kvconfig
+            find ~/.local/share/plasma/desktoptheme/Qogir-dark -name '*.svg' -exec sed -i \
+                -e 's/color:#eff0f1/color:#282a33/g' -e 's/stop-color:#eff0f1/stop-color:#282a33/g' \
+                -e 's/color:#fcfcfc/color:#30333d/g'  -e 's/stop-color:#fcfcfc/stop-color:#30333d/g' \
+                -e 's/color:#31363b/color:#d3dae3/g'  -e 's/stop-color:#31363b/stop-color:#d3dae3/g' \
+                {} + 2>/dev/null || true
+            qdbus6 org.kde.KWin /KWin reconfigure 2>/dev/null || true
+            ok "Motyw ciemny (Qogir-dark)"
+            ;;
+        light)
+            plasma-apply-desktoptheme Qogir-light
+            plasma-apply-colorscheme QogirLight
+            /usr/lib/plasma-changeicons Papirus-Light 2>/dev/null || true
+            _kwrite --file kwinrc --group org.kde.kdecoration2 --key theme "__aurorae__svg__Qogir"
+            mkdir -p ~/.config/Kvantum
+            echo -e "[General]\ntheme=Qogir-light" > ~/.config/Kvantum/kvantum.kvconfig
+            qdbus6 org.kde.KWin /KWin reconfigure 2>/dev/null || true
+            ok "Motyw jasny (Qogir-light)"
+            ;;
+        info)
+            echo -e "${BOLD}Motyw:${NC}"
+            echo "  Plasma:     $(_kread --file plasmarc --group Theme --key name)"
+            echo "  Kolory:     $(_kread --file kdeglobals --group General --key ColorScheme)"
+            echo "  Ikony:      $(_kread --file kdeglobals --group Icons --key Theme)"
+            echo "  Dekoracja:  $(_kread --file kwinrc --group org.kde.kdecoration2 --key theme)"
+            echo "  Kursor:     $(_kread --file kcminputrc --group Mouse --key cursorTheme)"
+            echo "  Kvantum:    $(grep theme= ~/.config/Kvantum/kvantum.kvconfig 2>/dev/null | cut -d= -f2)"
+            ;;
+        help|*) echo "  theme dark|light|info" ;;
+    esac
+}
+
+# ── Panel ───────────────────────────────────────────────────
+_panel_location() { [[ "${1:-dock}" == "top" ]] && echo "top" || echo "bottom"; }
+_panel_id()       { [[ "${1:-dock}" == "top" ]] && echo 23 || echo 54; }
+
+cmd_panel() {
+    case "${1:-help}" in
+        opacity)
+            local val="${2:-adaptive}"
+            case "$val" in
+                adaptive|auto) val=0 ;; opaque|solid) val=1 ;; translucent) val=2 ;;
+            esac
+            _kwrite --file plasmashellrc --group PlasmaViews --group "Panel 23" --key panelOpacity "$val"
+            ok "Panel opacity: $val (0=adaptive 1=opaque 2=translucent)"
+            info "Restart wymagany: rice restart"
+            ;;
+        thickness)
+            [[ -z "${3:-}" ]] && { echo "Uzycie: rice panel thickness <top|dock> <px>"; return 1; }
+            _kwrite --file plasmashellrc --group PlasmaViews --group "Panel $(_panel_id "$2")" --group Defaults --key thickness "$3"
+            ok "Panel $2 thickness: ${3}px"
+            info "Restart wymagany: rice restart"
+            ;;
+        floating)
+            local val=1; [[ "${3:-true}" =~ ^(false|off|0)$ ]] && val=0
+            _kwrite --file plasmashellrc --group PlasmaViews --group "Panel $(_panel_id "${2:-dock}")" --key floating "$val"
+            ok "Panel ${2:-dock} floating: $val"
+            info "Restart wymagany: rice restart"
+            ;;
+        autohide)
+            local hiding="autohide"; [[ "${3:-true}" =~ ^(false|off|0)$ ]] && hiding="none"
+            _dbus_panel "
+            var p = panels();
+            for (var i = 0; i < p.length; i++)
+                if (p[i].location == '$(_panel_location "${2:-dock}")')
+                    p[i].hiding = '$hiding';"
+            ok "Panel ${2:-dock} autohide: $hiding"
+            ;;
+        height)
+            _dbus_panel "
+            var p = panels();
+            for (var i = 0; i < p.length; i++)
+                if (p[i].location == '$(_panel_location "${2:-dock}")')
+                    p[i].height = ${3:-48};"
+            ok "Panel ${2:-dock} height: ${3:-48}px"
+            ;;
+        help|*) cat <<'EOF'
+  panel opacity <adaptive|opaque|translucent>
+  panel thickness <top|dock> <px>
+  panel floating <top|dock> <true|false>
+  panel autohide <top|dock> <true|false>
+  panel height <top|dock> <px>
+EOF
+            ;;
+    esac
+}
+
+# ── Dock ────────────────────────────────────────────────────
+cmd_dock() {
+    local cfg=~/.config/plasma-org.kde.plasma.desktop-appletsrc
+    case "${1:-help}" in
+        add)
+            [[ -z "${2:-}" ]] && { echo "Uzycie: rice dock add <app.desktop>"; return 1; }
+            [[ ! -f "/usr/share/applications/$2" ]] && { fail "Nie znaleziono: $2"; return 1; }
+            local current
+            current=$(grep -A1 '\[Containments\]\[54\]\[Applets\]\[55\]\[Configuration\]\[General\]' "$cfg" | grep launchers= | sed 's/launchers=//')
+            echo "$current" | grep -q "$2" && { warn "$2 juz w docku"; return 0; }
+            sed -i "s|launchers=.*|launchers=${current},applications:${2}|" "$cfg"
+            ok "Dodano: $2"
+            info "Restart wymagany: rice restart"
+            ;;
+        remove)
+            [[ -z "${2:-}" ]] && { echo "Uzycie: rice dock remove <app.desktop>"; return 1; }
+            sed -i "s|,applications:${2}||g; s|applications:${2},||g; s|applications:${2}||g" "$cfg"
+            ok "Usunieto: $2"
+            info "Restart wymagany: rice restart"
+            ;;
+        list)
+            echo -e "${BOLD}Dock:${NC}"
+            grep -A1 '\[Containments\]\[54\]\[Applets\]\[55\]\[Configuration\]\[General\]' "$cfg" \
+                | grep launchers= | sed 's/launchers=//' | tr ',' '\n' | while read -r l; do
+                [[ -n "$l" ]] && echo "  $l"
+            done
+            ;;
+        help|*) cat <<'EOF'
+  dock add <app.desktop>      dodaj do docka
+  dock remove <app.desktop>   usun z docka
+  dock list                   pokaz zawartosc
+EOF
+            ;;
+    esac
+}
+
+# ── Effects ─────────────────────────────────────────────────
+cmd_effects() {
+    case "${1:-help}" in
+        blur)
+            local s="${2:-8}"
+            _kwrite --file kwinrc --group Plugins --key blurEnabled true
+            _kwrite --file kwinrc --group Effect-blur --key BlurStrength "$s"
+            _kwrite --file kwinrc --group Effect-blur --key NoiseStrength 0
+            qdbus6 org.kde.KWin /KWin reconfigure 2>/dev/null || true
+            ok "Blur: $s/15"
+            ;;
+        blur-off)
+            _kwrite --file kwinrc --group Plugins --key blurEnabled false
+            qdbus6 org.kde.KWin /KWin reconfigure 2>/dev/null || true
+            ok "Blur wylaczony"
+            ;;
+        corners)
+            local s="${2:-10}"
+            _kwrite --file kwinrc --group Plugins --key kwin_effect_rounded_cornersEnabled true
+            _kwrite --file kwinrc --group Effect-kwin_effect_rounded_corners --key Size "$s"
+            qdbus6 org.kde.KWin /KWin reconfigure 2>/dev/null || true
+            ok "Zaokraglone rogi: ${s}px"
+            ;;
+        corners-off)
+            _kwrite --file kwinrc --group Plugins --key kwin_effect_rounded_cornersEnabled false
+            qdbus6 org.kde.KWin /KWin reconfigure 2>/dev/null || true
+            ok "Zaokraglone rogi wylaczone"
+            ;;
+        dim)
+            local s="${2:-15}"
+            _kwrite --file kwinrc --group Plugins --key diminactiveEnabled true
+            _kwrite --file kwinrc --group Effect-diminactive --key Strength "$s"
+            qdbus6 org.kde.KWin /KWin reconfigure 2>/dev/null || true
+            ok "Dim inactive: ${s}%"
+            ;;
+        dim-off)
+            _kwrite --file kwinrc --group Plugins --key diminactiveEnabled false
+            qdbus6 org.kde.KWin /KWin reconfigure 2>/dev/null || true
+            ok "Dim inactive wylaczony"
+            ;;
+        status|info)
+            echo -e "${BOLD}Efekty KWin:${NC}"
+            for effect in blur kwin_effect_rounded_corners diminactive; do
+                local enabled name
+                enabled=$(_kread --file kwinrc --group Plugins --key "${effect}Enabled")
+                case "$effect" in
+                    blur) name="Blur" ;;
+                    kwin_effect_rounded_corners) name="Rounded Corners" ;;
+                    diminactive) name="Dim Inactive" ;;
+                esac
+                [[ "$enabled" == "true" ]] \
+                    && echo -e "  ${GREEN}ON${NC}  $name" \
+                    || echo -e "  ${DIM}OFF${NC} $name"
+            done
+            ;;
+        help|*) cat <<'EOF'
+  effects blur [1-15]         blur (domyslnie 8)
+  effects blur-off            wylacz blur
+  effects corners [px]        zaokraglone rogi (domyslnie 10)
+  effects corners-off         wylacz zaokraglenia
+  effects dim [1-100]         dim inactive (domyslnie 15%)
+  effects dim-off             wylacz dim
+  effects status              pokaz status
+EOF
+            ;;
+    esac
+}
+
+# ── Icons ───────────────────────────────────────────────────
+cmd_icons() {
+    case "${1:-help}" in
+        desktop)  _kwrite --file kdeglobals --group DesktopIcons     --key Size "${2:-48}"; ok "Pulpit: ${2:-48}px" ;;
+        panel)    _kwrite --file kdeglobals --group PanelIcons       --key Size "${2:-22}"; ok "Panel: ${2:-22}px" ;;
+        toolbar)  _kwrite --file kdeglobals --group ToolbarIcons     --key Size "${2:-22}"
+                  _kwrite --file kdeglobals --group MainToolbarIcons --key Size "${2:-22}"; ok "Toolbar: ${2:-22}px" ;;
+        small)    _kwrite --file kdeglobals --group SmallIcons       --key Size "${2:-16}"; ok "Male: ${2:-16}px" ;;
+        dialog)   _kwrite --file kdeglobals --group DialogIcons      --key Size "${2:-32}"; ok "Dialogi: ${2:-32}px" ;;
+        all)
+            local s="${2:-22}"
+            cmd_icons desktop "$((s * 2))"
+            cmd_icons panel "$s"
+            cmd_icons toolbar "$s"
+            cmd_icons small "$((s - 6 > 12 ? s - 6 : 12))"
+            cmd_icons dialog "$((s + 10))"
+            ;;
+        info)
+            echo -e "${BOLD}Ikony:${NC}"
+            echo "  Pulpit:   $(_kread --file kdeglobals --group DesktopIcons --key Size)px"
+            echo "  Panel:    $(_kread --file kdeglobals --group PanelIcons --key Size)px"
+            echo "  Toolbar:  $(_kread --file kdeglobals --group ToolbarIcons --key Size)px"
+            echo "  Male:     $(_kread --file kdeglobals --group SmallIcons --key Size)px"
+            echo "  Dialogi:  $(_kread --file kdeglobals --group DialogIcons --key Size)px"
+            ;;
+        help|*) cat <<'EOF'
+  icons desktop|panel|toolbar|small|dialog [px]
+  icons all [px]              ustaw proporcjonalnie
+  icons info                  pokaz rozmiary
+EOF
+            ;;
+    esac
+}
+
+# ── Transparency ────────────────────────────────────────────
+cmd_transparency() {
+    case "${1:-help}" in
+        panel)
+            _kwrite --file plasmashellrc --group PlasmaViews --group "Panel 23" --key panelOpacity 2
+            ok "Panel: translucent"
+            info "Restart wymagany: rice restart"
+            ;;
+        dock)
+            _kwrite --file plasmashellrc --group PlasmaViews --group "Panel 54" --key panelOpacity 2
+            ok "Dock: translucent"
+            info "Restart wymagany: rice restart"
+            ;;
+        kitty)
+            local v="${2:-0.85}"
+            [[ -f ~/.config/kitty/kitty.conf ]] && sed -i "s/^background_opacity .*/background_opacity $v/" ~/.config/kitty/kitty.conf
+            ok "Kitty opacity: $v"
+            info "Zrestartuj kitty"
+            ;;
+        info)
+            echo -e "${BOLD}Przezroczystosc:${NC}"
+            local p; p=$(_kread --file plasmashellrc --group PlasmaViews --group "Panel 23" --key panelOpacity)
+            case "$p" in 0) p="adaptive" ;; 1) p="opaque" ;; 2) p="translucent" ;; esac
+            echo "  Panel:  $p"
+            [[ -f ~/.config/kitty/kitty.conf ]] && echo "  Kitty:  $(grep '^background_opacity' ~/.config/kitty/kitty.conf | awk '{print $2}')"
+            ;;
+        help|*) cat <<'EOF'
+  transparency panel          panel translucent
+  transparency dock           dock translucent
+  transparency kitty [0-1]    kitty opacity (domyslnie 0.85)
+  transparency info           pokaz ustawienia
+EOF
+            ;;
+    esac
+}
+
+# ── Fonts ───────────────────────────────────────────────────
+cmd_fonts() {
+    case "${1:-help}" in
+        set)
+            local f="${2:-IBM Plex Mono}" s="${3:-10}"
+            _kwrite --file kdeglobals --group General --key font "$f,$s,-1,5,50,0,0,0,0,0"
+            _kwrite --file kdeglobals --group General --key menuFont "$f,$s,-1,5,50,0,0,0,0,0"
+            _kwrite --file kdeglobals --group General --key toolBarFont "$f,$((s-1)),-1,5,50,0,0,0,0,0"
+            _kwrite --file kdeglobals --group General --key smallestReadableFont "$f,$((s-2)),-1,5,50,0,0,0,0,0"
+            ok "System: $f ${s}pt"
+            info "Wyloguj/zaloguj"
+            ;;
+        terminal)
+            local f="${2:-JetBrains Mono}" s="${3:-11}"
+            [[ -f ~/.config/kitty/kitty.conf ]] || return
+            sed -i "s/^font_family .*/font_family      $f/" ~/.config/kitty/kitty.conf
+            sed -i "s/^font_size .*/font_size        $s/" ~/.config/kitty/kitty.conf
+            ok "Kitty: $f ${s}pt"
+            info "Zrestartuj kitty"
+            ;;
+        info)
+            echo -e "${BOLD}Czcionki:${NC}"
+            echo "  System:  $(_kread --file kdeglobals --group General --key font)"
+            echo "  Fixed:   $(_kread --file kdeglobals --group General --key fixed)"
+            [[ -f ~/.config/kitty/kitty.conf ]] && {
+                echo "  Kitty:   $(grep '^font_family' ~/.config/kitty/kitty.conf | sed 's/font_family *//')"
+                echo "  Size:    $(grep '^font_size' ~/.config/kitty/kitty.conf | sed 's/font_size *//')"
+            }
+            ;;
+        help|*) cat <<'EOF'
+  fonts set [czcionka] [pt]        systemowa (domyslnie IBM Plex Mono 10)
+  fonts terminal [czcionka] [pt]   kitty (domyslnie JetBrains Mono 11)
+  fonts info                       pokaz czcionki
+EOF
+            ;;
+    esac
+}
+
+# ── Terminal ────────────────────────────────────────────────
+cmd_terminal() {
+    case "${1:-help}" in
+        opacity)
+            local v="${2:-0.92}"
+            [[ -f ~/.config/kitty/kitty.conf ]] && sed -i "s/^background_opacity .*/background_opacity $v/" ~/.config/kitty/kitty.conf
+            ok "Kitty opacity: $v"
+            ;;
+        padding)
+            local v="${2:-8 12}"
+            [[ -f ~/.config/kitty/kitty.conf ]] && sed -i "s/^window_padding_width .*/window_padding_width $v/" ~/.config/kitty/kitty.conf
+            ok "Kitty padding: $v"
+            ;;
+        info)
+            echo -e "${BOLD}Terminal (kitty):${NC}"
+            grep -E "^(font_|background_opacity|window_padding|tab_bar|shell )" ~/.config/kitty/kitty.conf 2>/dev/null \
+                | while read -r l; do echo "  $l"; done
+            ;;
+        help|*) cat <<'EOF'
+  terminal opacity [0-1]     przezroczystosc (domyslnie 0.92)
+  terminal padding [px]      padding (domyslnie "8 12")
+  terminal info              pokaz konfiguracje
+EOF
+            ;;
+    esac
+}
+
+# ── Cursor ──────────────────────────────────────────────────
+cmd_cursor() {
+    case "${1:-help}" in
+        set)
+            local t="${2:-Bibata-Modern-Classic}" s="${3:-24}"
+            _kwrite --file kcminputrc --group Mouse --key cursorTheme "$t"
+            _kwrite --file kcminputrc --group Mouse --key cursorSize "$s"
+            _kwrite --file kdeglobals --group KDE --key cursorTheme "$t"
+            ok "Kursor: $t ${s}px"
+            info "Wyloguj/zaloguj"
+            ;;
+        list)
+            echo -e "${BOLD}Kursory:${NC}"
+            find /usr/share/icons ~/.local/share/icons -name "cursors" -type d 2>/dev/null \
+                | sed 's|.*/icons/||; s|/cursors||' | sort -u | while read -r t; do echo "  $t"; done
+            ;;
+        info)
+            echo "  Kursor: $(_kread --file kcminputrc --group Mouse --key cursorTheme) ($(_kread --file kcminputrc --group Mouse --key cursorSize)px)"
+            ;;
+        help|*) cat <<'EOF'
+  cursor set [motyw] [px]    zmien kursor (domyslnie Bibata-Modern-Classic 24)
+  cursor list                dostepne motywy
+  cursor info                aktualny
+EOF
+            ;;
+    esac
+}
+
+# ── Desktops ────────────────────────────────────────────────
+cmd_desktops() {
+    case "${1:-help}" in
+        set)
+            _kwrite --file kwinrc --group Desktops --key Number "${2:-3}"
+            _kwrite --file kwinrc --group Desktops --key Rows 1
+            qdbus6 org.kde.KWin /KWin reconfigure 2>/dev/null || true
+            ok "Pulpity: ${2:-3}"
+            ;;
+        info)
+            echo "  Pulpity: $(_kread --file kwinrc --group Desktops --key Number)"
+            ;;
+        help|*) echo "  desktops set [n]    ustaw liczbe (domyslnie 3)" ;;
+    esac
+}
+
+# ── Animations ──────────────────────────────────────────────
+cmd_animations() {
+    case "${1:-help}" in
+        speed)
+            _kwrite --file kdeglobals --group KDE --key AnimationDurationFactor "${2:-0.5}"
+            ok "Animacje: ${2:-0.5} (0=brak, 1=normalne)"
+            ;;
+        off)
+            _kwrite --file kdeglobals --group KDE --key AnimationDurationFactor 0
+            ok "Animacje wylaczone"
+            ;;
+        info)
+            echo "  Animacje: $(_kread --file kdeglobals --group KDE --key AnimationDurationFactor) (0=brak, 1=normalne)"
+            ;;
+        help|*) cat <<'EOF'
+  animations speed [0-1]     szybkosc (domyslnie 0.5)
+  animations off             wylacz
+  animations info            pokaz
+EOF
+            ;;
+    esac
+}
+
+# ── Buttons ─────────────────────────────────────────────────
+cmd_buttons() {
+    case "${1:-help}" in
+        mac|left)
+            _kwrite --file kwinrc --group org.kde.kdecoration2 --key ButtonsOnLeft "XAI"
+            _kwrite --file kwinrc --group org.kde.kdecoration2 --key ButtonsOnRight ""
+            qdbus6 org.kde.KWin /KWin reconfigure 2>/dev/null || true
+            ok "Przyciski: macOS (lewa)"
+            ;;
+        windows|right)
+            _kwrite --file kwinrc --group org.kde.kdecoration2 --key ButtonsOnLeft "M"
+            _kwrite --file kwinrc --group org.kde.kdecoration2 --key ButtonsOnRight "IAX"
+            qdbus6 org.kde.KWin /KWin reconfigure 2>/dev/null || true
+            ok "Przyciski: Windows (prawa)"
+            ;;
+        info)
+            echo -e "${BOLD}Przyciski okien:${NC}"
+            echo "  Lewa:  $(_kread --file kwinrc --group org.kde.kdecoration2 --key ButtonsOnLeft)"
+            echo "  Prawa: $(_kread --file kwinrc --group org.kde.kdecoration2 --key ButtonsOnRight)"
+            ;;
+        help|*) cat <<'EOF'
+  buttons mac                zamknij/maks/mini po lewej
+  buttons windows            po prawej (standard)
+  buttons info               pokaz uklad
+EOF
+            ;;
+    esac
+}
+
+# ── Presets ─────────────────────────────────────────────────
+cmd_preset() {
+    case "${1:-help}" in
+        minimal)
+            echo -e "\n${BOLD}  Preset: Minimal${NC}\n"
+            cmd_effects blur 4
+            cmd_effects corners 6
+            cmd_effects dim-off
+            cmd_icons all 20
+            cmd_animations speed 0.15
+            cmd_transparency kitty 0.95
+            cmd_panel autohide dock true
+            cmd_panel height dock 44
+            echo ""
+            ok "Preset minimal zastosowany"
+            ;;
+        comfy)
+            echo -e "\n${BOLD}  Preset: Comfy${NC}\n"
+            cmd_effects blur 8
+            cmd_effects corners 10
+            cmd_effects dim 15
+            cmd_icons all 24
+            cmd_animations speed 0.25
+            cmd_transparency kitty 0.85
+            cmd_panel autohide dock true
+            cmd_panel height dock 56
+            echo ""
+            ok "Preset comfy zastosowany"
+            ;;
+        heavy)
+            echo -e "\n${BOLD}  Preset: Heavy${NC}\n"
+            cmd_effects blur 12
+            cmd_effects corners 14
+            cmd_effects dim 20
+            cmd_icons all 30
+            cmd_animations speed 0.5
+            cmd_transparency kitty 0.7
+            cmd_panel autohide dock true
+            cmd_panel height dock 64
+            echo ""
+            ok "Preset heavy zastosowany"
+            ;;
+        help|*) cat <<'EOF'
+  preset minimal     maly blur, male ikony, szybkie animacje
+  preset comfy       zbalansowany (domyslny rice)
+  preset heavy       duzy blur, duze ikony, duzo efektow
+EOF
+            ;;
+    esac
+}
+
+# ── System ──────────────────────────────────────────────────
+cmd_restart() {
+    info "Restartowanie plasmashell..."
+    kquitapp6 plasmashell 2>/dev/null || true
+    sleep 2
+    kstart plasmashell 2>/dev/null &
+    sleep 4
+    _dbus_panel "
+    var p = panels();
+    for (var i = 0; i < p.length; i++)
+        if (p[i].location == 'bottom') {
+            p[i].alignment = 'center';
+            p[i].lengthMode = 'fit';
+        }"
+    ok "Plasmashell zrestartowany"
+}
+
+cmd_backup() {
+    local dir="${1:-$SCRIPT_DIR/backup-$(date +%Y%m%d-%H%M%S)}"
+    mkdir -p "$dir"
+    for f in plasma-org.kde.plasma.desktop-appletsrc plasmashellrc kwinrc kdeglobals kcminputrc; do
+        cp ~/.config/$f "$dir/" 2>/dev/null || true
+    done
+    cp ~/.config/kitty/kitty.conf "$dir/" 2>/dev/null || true
+    cp ~/.config/starship.toml "$dir/" 2>/dev/null || true
+    cp ~/.config/Kvantum/kvantum.kvconfig "$dir/" 2>/dev/null || true
+    ok "Backup: $dir"
+}
+
+cmd_export() {
+    info "Eksport do $SCRIPT_DIR/configs/..."
+    cp ~/.config/plasma-org.kde.plasma.desktop-appletsrc "$SCRIPT_DIR/configs/plasma-appletsrc"
+    cp ~/.config/plasmashellrc "$SCRIPT_DIR/configs/plasmashellrc"
+    cp ~/.config/kitty/kitty.conf "$SCRIPT_DIR/configs/kitty.conf"
+    cp ~/.config/starship.toml "$SCRIPT_DIR/configs/starship.toml"
+    cp ~/.local/share/wallpapers/rice-wallpaper.png "$SCRIPT_DIR/wallpaper/wallpaper.png" 2>/dev/null || true
+    ok "Wyeksportowano"
+}
+
+cmd_install_cli() {
+    mkdir -p ~/.local/bin
+    ln -sf "$SCRIPT_DIR/rice" ~/.local/bin/rice
+    ok "Zainstalowano: rice dostepne globalnie"
+
+    # Fish completions
+    local comp_dir=~/.config/fish/completions
+    mkdir -p "$comp_dir"
+    cat > "$comp_dir/rice.fish" <<'FISHEOF'
+set -l commands wallpaper theme panel dock effects icons transparency fonts terminal cursor desktops animations buttons preset restart backup export status help
+
+complete -c rice -f
+complete -c rice -n "not __fish_seen_subcommand_from $commands" -a "$commands"
+
+complete -c rice -n "__fish_seen_subcommand_from wallpaper" -a "set darken lighten blur reset"
+complete -c rice -n "__fish_seen_subcommand_from theme" -a "dark light info"
+complete -c rice -n "__fish_seen_subcommand_from panel" -a "opacity thickness floating autohide height"
+complete -c rice -n "__fish_seen_subcommand_from dock" -a "add remove list"
+complete -c rice -n "__fish_seen_subcommand_from effects" -a "blur blur-off corners corners-off dim dim-off status"
+complete -c rice -n "__fish_seen_subcommand_from icons" -a "desktop panel toolbar small dialog all info"
+complete -c rice -n "__fish_seen_subcommand_from transparency" -a "panel dock kitty info"
+complete -c rice -n "__fish_seen_subcommand_from fonts" -a "set terminal info"
+complete -c rice -n "__fish_seen_subcommand_from terminal" -a "opacity padding info"
+complete -c rice -n "__fish_seen_subcommand_from cursor" -a "set list info"
+complete -c rice -n "__fish_seen_subcommand_from desktops" -a "set info"
+complete -c rice -n "__fish_seen_subcommand_from animations" -a "speed off info"
+complete -c rice -n "__fish_seen_subcommand_from buttons" -a "mac windows left right info"
+complete -c rice -n "__fish_seen_subcommand_from preset" -a "minimal comfy heavy"
+FISHEOF
+    ok "Fish completions zainstalowane"
+}
+
+# ── Status ──────────────────────────────────────────────────
+cmd_status() {
+    echo ""
+    echo -e "${BOLD}  ╭─────────────────────────────╮${NC}"
+    echo -e "${BOLD}  │   KDE Rice — Status   v${VERSION}  │${NC}"
+    echo -e "${BOLD}  ╰─────────────────────────────╯${NC}"
+    echo ""
+    cmd_theme info;        echo ""
+    cmd_cursor info;       echo ""
+    cmd_fonts info;        echo ""
+    cmd_icons info;        echo ""
+    cmd_transparency info; echo ""
+    cmd_effects status;    echo ""
+    cmd_desktops info
+    cmd_animations info
+    cmd_buttons info;      echo ""
+    cmd_terminal info;     echo ""
+    cmd_dock list;         echo ""
+}
+
+# ── Help ────────────────────────────────────────────────────
+cmd_help() {
+    echo ""
+    echo -e "${BOLD}  rice${NC} ${DIM}v${VERSION}${NC} — KDE Plasma 6 rice manager"
+    echo -e "  ──────────────────────────────────────"
+    echo ""
+    echo -e "  ${CYAN}Wyglad${NC}"
+    echo "    wallpaper   tapeta (set/darken/lighten/blur/reset)"
+    echo "    theme       motyw Qogir (dark/light)"
+    echo "    cursor      motyw kursora"
+    echo "    fonts       czcionki systemowe i terminalowe"
+    echo "    icons       rozmiary ikon"
+    echo ""
+    echo -e "  ${CYAN}Panele${NC}"
+    echo "    panel       opacity, grubosc, floating, autohide, wysokosc"
+    echo "    dock        aplikacje w docku (add/remove/list)"
+    echo ""
+    echo -e "  ${CYAN}Efekty${NC}"
+    echo "    effects     blur, zaokraglone rogi, dim inactive"
+    echo "    transparency  przezroczystosc paneli i terminala"
+    echo "    animations  szybkosc animacji"
+    echo "    buttons     przyciski okien (mac/windows)"
+    echo "    desktops    pulpity wirtualne"
+    echo ""
+    echo -e "  ${CYAN}Terminal${NC}"
+    echo "    terminal    opacity, padding kitty"
+    echo ""
+    echo -e "  ${CYAN}Presety${NC}"
+    echo "    preset minimal   maly blur, male ikony, szybkie"
+    echo "    preset comfy     zbalansowany (domyslny)"
+    echo "    preset heavy     duzo efektow, duze ikony"
+    echo ""
+    echo -e "  ${CYAN}System${NC}"
+    echo "    restart     restart plasmashell"
+    echo "    backup      backup konfiguracji"
+    echo "    export      eksport do repo"
+    echo "    status      pokaz wszystko"
+    echo "    install     zainstaluj CLI globalnie + fish completions"
+    echo ""
+    echo -e "  ${DIM}Przyklady:${NC}"
+    echo "    rice wallpaper set ~/foto.jpg"
+    echo "    rice effects blur 12"
+    echo "    rice preset comfy"
+    echo "    rice panel autohide dock true"
+    echo "    rice icons all 24"
+    echo "    rice dock add brave-browser.desktop"
+    echo ""
+}
+
+# ── Router ──────────────────────────────────────────────────
+case "${1:-help}" in
+    wallpaper)    shift; cmd_wallpaper "$@" ;;
+    theme)        shift; cmd_theme "$@" ;;
+    panel)        shift; cmd_panel "$@" ;;
+    dock)         shift; cmd_dock "$@" ;;
+    effects)      shift; cmd_effects "$@" ;;
+    icons)        shift; cmd_icons "$@" ;;
+    transparency) shift; cmd_transparency "$@" ;;
+    fonts)        shift; cmd_fonts "$@" ;;
+    terminal)     shift; cmd_terminal "$@" ;;
+    cursor)       shift; cmd_cursor "$@" ;;
+    desktops)     shift; cmd_desktops "$@" ;;
+    animations)   shift; cmd_animations "$@" ;;
+    buttons)      shift; cmd_buttons "$@" ;;
+    preset)       shift; cmd_preset "$@" ;;
+    restart)      shift; cmd_restart ;;
+    backup)       shift; cmd_backup "$@" ;;
+    export)       shift; cmd_export ;;
+    status)       cmd_status ;;
+    install)      cmd_install_cli ;;
+    -v|--version) echo "rice v${VERSION}" ;;
+    help|--help|-h) cmd_help ;;
+    *)
+        fail "Nieznana komenda: $1"
+        cmd_help
+        exit 1
+        ;;
+esac
