@@ -318,13 +318,22 @@ cmd_effects() {
 cmd_theme() {
     case "$1" in
         dark)
-            plasma-apply-desktoptheme Qogir
+            plasma-apply-desktoptheme Qogir-dark
             plasma-apply-colorscheme QogirManjaroDark
             /usr/lib/plasma-changeicons Papirus-Dark 2>/dev/null
             kwriteconfig6 --file kwinrc --group org.kde.kdecoration2 --key theme "__aurorae__svg__Qogir-dark"
             kwriteconfig6 --file kdeglobals --group KDE --key widgetStyle "kvantum"
             mkdir -p ~/.config/Kvantum
             echo -e "[General]\ntheme=Qogir-dark" > ~/.config/Kvantum/kvantum.kvconfig
+            # Fix hardcoded light colors in upstream SVGs
+            find ~/.local/share/plasma/desktoptheme/Qogir-dark -name '*.svg' -exec sed -i \
+                -e 's/color:#eff0f1/color:#282a33/g' \
+                -e 's/stop-color:#eff0f1/stop-color:#282a33/g' \
+                -e 's/color:#fcfcfc/color:#30333d/g' \
+                -e 's/stop-color:#fcfcfc/stop-color:#30333d/g' \
+                -e 's/color:#31363b/color:#d3dae3/g' \
+                -e 's/stop-color:#31363b/stop-color:#d3dae3/g' \
+                {} +
             qdbus6 org.kde.KWin /KWin reconfigure 2>/dev/null
             ok "Motyw ciemny (Qogir-dark) zastosowany"
             ;;

@@ -162,6 +162,19 @@ info "Zastosowanie motywow KDE..."
 mkdir -p ~/.local/share/plasma/desktoptheme/Qogir-dark
 cp -r /usr/share/plasma/desktoptheme/Qogir/* ~/.local/share/plasma/desktoptheme/Qogir-dark/
 cp -r /usr/share/plasma/desktoptheme/Qogir-dark/* ~/.local/share/plasma/desktoptheme/Qogir-dark/ 2>/dev/null || true
+
+# Fix: upstream SVGs have hardcoded light colors (#eff0f1, #fcfcfc, #31363b)
+# Replace with dark equivalents from QogirManjaroDark color scheme
+find ~/.local/share/plasma/desktoptheme/Qogir-dark -name '*.svg' -exec sed -i \
+    -e 's/color:#eff0f1/color:#282a33/g' \
+    -e 's/stop-color:#eff0f1/stop-color:#282a33/g' \
+    -e 's/color:#fcfcfc/color:#30333d/g' \
+    -e 's/stop-color:#fcfcfc/stop-color:#30333d/g' \
+    -e 's/color:#31363b/color:#d3dae3/g' \
+    -e 's/stop-color:#31363b/stop-color:#d3dae3/g' \
+    {} +
+ok "Poprawiono kolory SVG na ciemne"
+
 cat > ~/.local/share/plasma/desktoptheme/Qogir-dark/metadata.json <<'METAEOF'
 {
     "KPlugin": {
