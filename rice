@@ -4,7 +4,7 @@
 
 set -euo pipefail
 
-VERSION="2.0.0"
+VERSION="2.1.0"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # ── Colors ──────────────────────────────────────────────────
@@ -510,6 +510,231 @@ EOF
     esac
 }
 
+# ── Night Color ─────────────────────────────────────────────
+cmd_nightcolor() {
+    case "${1:-help}" in
+        on)
+            local temp="${2:-3800}"
+            _kwrite --file kwinrc --group NightColor --key Active true
+            _kwrite --file kwinrc --group NightColor --key Mode "Automatic"
+            _kwrite --file kwinrc --group NightColor --key NightTemperature "$temp"
+            qdbus6 org.kde.KWin /KWin reconfigure 2>/dev/null || true
+            ok "Night Color: ON (${temp}K wieczorem)"
+            ;;
+        off)
+            _kwrite --file kwinrc --group NightColor --key Active false
+            qdbus6 org.kde.KWin /KWin reconfigure 2>/dev/null || true
+            ok "Night Color: OFF"
+            ;;
+        temp)
+            _kwrite --file kwinrc --group NightColor --key NightTemperature "${2:-3800}"
+            qdbus6 org.kde.KWin /KWin reconfigure 2>/dev/null || true
+            ok "Night Color temp: ${2:-3800}K"
+            ;;
+        info)
+            echo -e "${BOLD}Night Color:${NC}"
+            local active; active=$(_kread --file kwinrc --group NightColor --key Active)
+            local temp; temp=$(_kread --file kwinrc --group NightColor --key NightTemperature)
+            [[ "$active" == "true" ]] \
+                && echo -e "  ${GREEN}ON${NC}  ${temp:-4500}K" \
+                || echo -e "  ${DIM}OFF${NC}"
+            ;;
+        help|*) cat <<'EOF'
+  nightcolor on [temp]       wlacz (domyslnie 3800K)
+  nightcolor off             wylacz
+  nightcolor temp <K>        zmien temperature
+  nightcolor info            pokaz status
+EOF
+            ;;
+    esac
+}
+
+# ── Hot Corners ─────────────────────────────────────────────
+cmd_hotcorners() {
+    case "${1:-help}" in
+        desktop)
+            # Top-left: Overview, Top-right: Show Desktop
+            _kwrite --file kwinrc --group Effect-overview --key BorderActivate 7
+            _kwrite --file kwinrc --group ElectricBorders --key TopRight "ShowDesktop"
+            qdbus6 org.kde.KWin /KWin reconfigure 2>/dev/null || true
+            ok "Hot corners: lewy-gorny=Overview, prawy-gorny=Pulpit"
+            ;;
+        overview)
+            _kwrite --file kwinrc --group Effect-overview --key BorderActivate 7
+            qdbus6 org.kde.KWin /KWin reconfigure 2>/dev/null || true
+            ok "Hot corner: lewy-gorny=Overview"
+            ;;
+        off)
+            _kwrite --file kwinrc --group Effect-overview --key BorderActivate 0
+            _kwrite --file kwinrc --group ElectricBorders --key TopLeft "None"
+            _kwrite --file kwinrc --group ElectricBorders --key TopRight "None"
+            _kwrite --file kwinrc --group ElectricBorders --key BottomLeft "None"
+            _kwrite --file kwinrc --group ElectricBorders --key BottomRight "None"
+            qdbus6 org.kde.KWin /KWin reconfigure 2>/dev/null || true
+            ok "Hot corners: wylaczone"
+            ;;
+        info)
+            echo -e "${BOLD}Hot corners:${NC}"
+            local ov; ov=$(_kread --file kwinrc --group Effect-overview --key BorderActivate)
+            local tr; tr=$(_kread --file kwinrc --group ElectricBorders --key TopRight)
+            [[ "$ov" == "7" ]] && echo "  Lewy-gorny:  Overview" || echo "  Lewy-gorny:  -"
+            [[ -n "$tr" && "$tr" != "None" ]] && echo "  Prawy-gorny: $tr" || echo "  Prawy-gorny: -"
+            ;;
+        help|*) cat <<'EOF'
+  hotcorners desktop         overview + pokaz pulpit
+  hotcorners overview        tylko overview (lewy-gorny)
+  hotcorners off             wylacz wszystkie
+  hotcorners info            pokaz ustawienia
+EOF
+            ;;
+    esac
+}
+
+# ── Shortcuts ───────────────────────────────────────────────
+cmd_shortcuts() {
+    case "${1:-help}" in
+        defaults)
+            # Meta+E = Dolphin, Meta+T = kitty, Meta+B = browser
+            kwriteconfig6 --file kglobalshortcutsrc --group "org.kde.dolphin.desktop" --key "_launch" "Meta+E,Meta+E,Dolphin"
+            kwriteconfig6 --file kglobalshortcutsrc --group "kitty.desktop" --key "_launch" "Meta+T,Meta+T,kitty"
+
+            # Detect browser
+            local browser="brave-browser.desktop"
+            [[ ! -f "/usr/share/applications/$browser" ]] && browser="firefox.desktop"
+            kwriteconfig6 --file kglobalshortcutsrc --group "$browser" --key "_launch" "Meta+B,Meta+B,Browser"
+
+            # Meta+D = Overview
+            kwriteconfig6 --file kglobalshortcutsrc --group kwin --key "Overview" "Meta+D,Meta+W,Toggle Overview"
+
+            # Meta+L = Lock screen
+            kwriteconfig6 --file kglobalshortcutsrc --group ksmserver --key "Lock Session" "Meta+L,Meta+L,Zablokuj sesje"
+
+            ok "Skroty: Meta+E=Pliki  Meta+T=Terminal  Meta+B=Przegladarka"
+            ok "        Meta+D=Overview  Meta+L=Blokada"
+            info "Wyloguj/zaloguj dla pelnej aktywacji"
+            ;;
+        info)
+            echo -e "${BOLD}Skroty klawiszowe:${NC}"
+            echo "  Meta+E  Dolphin"
+            echo "  Meta+T  kitty"
+            echo "  Meta+B  Przegladarka"
+            echo "  Meta+D  Overview"
+            echo "  Meta+L  Blokada ekranu"
+            ;;
+        help|*) cat <<'EOF'
+  shortcuts defaults         ustaw standardowe skroty
+  shortcuts info             pokaz skroty
+EOF
+            ;;
+    esac
+}
+
+# ── Clipboard ───────────────────────────────────────────────
+cmd_clipboard() {
+    case "${1:-help}" in
+        set)
+            local n="${2:-50}"
+            _kwrite --file klipperrc --group General --key MaxClipItems "$n"
+            _kwrite --file klipperrc --group General --key KeepClipboardContents true
+            ok "Klipper: $n wpisow w historii"
+            ;;
+        info)
+            echo "  Klipper: $(_kread --file klipperrc --group General --key MaxClipItems) wpisow"
+            ;;
+        help|*) echo "  clipboard set [n]    historia schowka (domyslnie 50)" ;;
+    esac
+}
+
+# ── Splash Screen ───────────────────────────────────────────
+cmd_splash() {
+    case "${1:-help}" in
+        off|none)
+            _kwrite --file ksplashrc --group KSplash --key Theme "None"
+            _kwrite --file ksplashrc --group KSplash --key Engine "none"
+            ok "Splash screen: wylaczony (szybszy start)"
+            ;;
+        default)
+            _kwrite --file ksplashrc --group KSplash --key Theme "org.kde.breeze.desktop"
+            _kwrite --file ksplashrc --group KSplash --key Engine "KSplashQML"
+            ok "Splash screen: Breeze (domyslny)"
+            ;;
+        info)
+            echo "  Splash: $(_kread --file ksplashrc --group KSplash --key Theme)"
+            ;;
+        help|*) cat <<'EOF'
+  splash off               wylacz splash (szybszy start)
+  splash default           przywroc Breeze
+  splash info              pokaz aktualny
+EOF
+            ;;
+    esac
+}
+
+# ── Lock Screen ─────────────────────────────────────────────
+cmd_lockscreen() {
+    case "${1:-help}" in
+        wallpaper)
+            local wp="${2:-$HOME/.local/share/wallpapers/rice-wallpaper.png}"
+            [[ ! -f "$wp" ]] && { fail "Brak tapety: $wp"; return 1; }
+            _kwrite --file kscreenlockerrc --group Greeter --group Wallpaper --group org.kde.image --group General \
+                --key Image "file://$wp"
+            _kwrite --file kscreenlockerrc --group Greeter --group Wallpaper --group org.kde.image --group General \
+                --key PreviewImage "file://$wp"
+            ok "Lock screen: tapeta zsynchronizowana"
+            ;;
+        info)
+            echo "  Lock screen: $(_kread --file kscreenlockerrc --group Greeter --group Wallpaper --group org.kde.image --group General --key Image)"
+            ;;
+        help|*) cat <<'EOF'
+  lockscreen wallpaper [plik]   ustaw tapete (domyslnie = pulpit)
+  lockscreen info               pokaz aktualna
+EOF
+            ;;
+    esac
+}
+
+# ── Touchpad ────────────────────────────────────────────────
+cmd_touchpad() {
+    case "${1:-help}" in
+        on)
+            _kwrite --file kcminputrc --group Libinput --group "2" --group "7" --group "SynPS/2 Synaptics TouchPad" \
+                --key NaturalScroll true
+            _kwrite --file kcminputrc --group Libinput --group "2" --group "7" --group "SynPS/2 Synaptics TouchPad" \
+                --key TapToClick true
+            # Gestures via libinput — KDE auto-detects touchpad
+            _kwrite --file kwinrc --group Plugins --key overviewEnabled true
+            _kwrite --file kwinrc --group Input --key TouchpadScrollMethod "TwoFingerScrolling"
+            qdbus6 org.kde.KWin /KWin reconfigure 2>/dev/null || true
+            ok "Touchpad: natural scroll, tap-to-click"
+            ;;
+        gestures)
+            # Plasma 6 built-in gestures
+            _kwrite --file kwinrc --group Plugins --key overviewEnabled true
+            # 4-finger swipe up = Overview (built-in in Plasma 6)
+            # 3-finger swipe left/right = switch desktop (built-in)
+            qdbus6 org.kde.KWin /KWin reconfigure 2>/dev/null || true
+            ok "Gesty: 4 palce gora=Overview, 3 palce lewo/prawo=pulpit"
+            info "Gesty sa wbudowane w Plasma 6 (libinput)"
+            ;;
+        off)
+            _kwrite --file kwinrc --group Input --key TouchpadScrollMethod "NoScrolling"
+            ok "Touchpad scroll: wylaczony"
+            ;;
+        info)
+            echo -e "${BOLD}Touchpad:${NC}"
+            echo "  Natural scroll: $(_kread --file kcminputrc --group Libinput --group 2 --group 7 --group "SynPS/2 Synaptics TouchPad" --key NaturalScroll)"
+            echo "  Tap to click:   $(_kread --file kcminputrc --group Libinput --group 2 --group 7 --group "SynPS/2 Synaptics TouchPad" --key TapToClick)"
+            ;;
+        help|*) cat <<'EOF'
+  touchpad on              natural scroll + tap-to-click
+  touchpad gestures        wlacz gesty (overview, switch desktop)
+  touchpad off             wylacz scroll
+  touchpad info            pokaz ustawienia
+EOF
+            ;;
+    esac
+}
+
 # ── Presets ─────────────────────────────────────────────────
 cmd_preset() {
     case "${1:-help}" in
@@ -556,6 +781,118 @@ cmd_preset() {
   preset minimal     maly blur, male ikony, szybkie animacje
   preset comfy       zbalansowany (domyslny rice)
   preset heavy       duzy blur, duze ikony, duzo efektow
+
+  profile desktop    stacjonarny PC z 2 monitorami
+  profile laptop     laptop z touchpadem
+EOF
+            ;;
+    esac
+}
+
+# ── Profiles ────────────────────────────────────────────────
+cmd_profile() {
+    case "${1:-help}" in
+        desktop)
+            echo -e "\n${BOLD}  Profile: Desktop (2 monitory)${NC}\n"
+
+            # Hot corners — mysz jest precyzyjna
+            cmd_hotcorners desktop
+
+            # Night Color — ochrona oczu
+            cmd_nightcolor on 3800
+
+            # Skroty klawiszowe
+            cmd_shortcuts defaults
+
+            # Clipboard 50 wpisow
+            cmd_clipboard set 50
+
+            # Splash off — szybki boot
+            cmd_splash off
+
+            # Lock screen = tapeta pulpitu
+            cmd_lockscreen wallpaper
+
+            # Efekty — pelna moc na stacjonarnym GPU
+            cmd_effects blur 10
+            cmd_effects corners 10
+            cmd_effects dim 15
+
+            # Ikony wieksze — duze monitory
+            cmd_icons all 28
+
+            # Animacje — plynne ale nie za wolne
+            cmd_animations speed 0.25
+
+            # Dock — duzy, autohide
+            cmd_panel autohide dock true
+            cmd_panel height dock 60
+
+            # 4 pulpity na 2 monitory
+            cmd_desktops set 4
+
+            echo ""
+            ok "Profile desktop zastosowany"
+            info "Wyloguj/zaloguj dla pelnej aktywacji"
+            ;;
+        laptop)
+            echo -e "\n${BOLD}  Profile: Laptop (touchpad)${NC}\n"
+
+            # Hot corners OFF — touchpad wywoluje przypadkowo
+            cmd_hotcorners off
+
+            # Gesty touchpada zamiast hot corners
+            cmd_touchpad on
+            cmd_touchpad gestures
+
+            # Night Color — laptop czesto uzywany wieczorem
+            cmd_nightcolor on 3500
+
+            # Skroty klawiszowe
+            cmd_shortcuts defaults
+
+            # Clipboard 50 wpisow
+            cmd_clipboard set 50
+
+            # Splash off
+            cmd_splash off
+
+            # Lock screen = tapeta pulpitu
+            cmd_lockscreen wallpaper
+
+            # Efekty — lzejsze (oszczednosc baterii)
+            cmd_effects blur 6
+            cmd_effects corners 8
+            cmd_effects dim 10
+
+            # Ikony mniejsze — maly ekran
+            cmd_icons all 22
+
+            # Animacje szybsze — mniej GPU
+            cmd_animations speed 0.15
+
+            # Dock — mniejszy, autohide
+            cmd_panel autohide dock true
+            cmd_panel height dock 48
+
+            # 3 pulpity
+            cmd_desktops set 3
+
+            echo ""
+            ok "Profile laptop zastosowany"
+            info "Wyloguj/zaloguj dla pelnej aktywacji"
+            ;;
+        info)
+            echo -e "${BOLD}Profile:${NC}"
+            echo "  desktop — stacjonarny z 2 monitorami"
+            echo "    hot corners, pelne efekty, duze ikony, 4 pulpity"
+            echo "  laptop — laptop z touchpadem"
+            echo "    gesty, lekkie efekty, male ikony, 3 pulpity"
+            ;;
+        help|*) cat <<'EOF'
+  profile desktop    stacjonarny: hot corners, pelne efekty, 4 pulpity
+  profile laptop     laptop: gesty, lekkie efekty, 3 pulpity
+  profile info       porownanie profili
 EOF
             ;;
     esac
@@ -609,7 +946,7 @@ cmd_install_cli() {
     local comp_dir=~/.config/fish/completions
     mkdir -p "$comp_dir"
     cat > "$comp_dir/rice.fish" <<'FISHEOF'
-set -l commands wallpaper theme panel dock effects icons transparency fonts terminal cursor desktops animations buttons preset restart backup export status help
+set -l commands wallpaper theme panel dock effects icons transparency fonts terminal cursor desktops animations buttons nightcolor hotcorners shortcuts clipboard touchpad splash lockscreen preset profile restart backup export status help
 
 complete -c rice -f
 complete -c rice -n "not __fish_seen_subcommand_from $commands" -a "$commands"
@@ -627,7 +964,15 @@ complete -c rice -n "__fish_seen_subcommand_from cursor" -a "set list info"
 complete -c rice -n "__fish_seen_subcommand_from desktops" -a "set info"
 complete -c rice -n "__fish_seen_subcommand_from animations" -a "speed off info"
 complete -c rice -n "__fish_seen_subcommand_from buttons" -a "mac windows left right info"
+complete -c rice -n "__fish_seen_subcommand_from nightcolor" -a "on off temp info"
+complete -c rice -n "__fish_seen_subcommand_from hotcorners" -a "desktop overview off info"
+complete -c rice -n "__fish_seen_subcommand_from shortcuts" -a "defaults info"
+complete -c rice -n "__fish_seen_subcommand_from clipboard" -a "set info"
+complete -c rice -n "__fish_seen_subcommand_from touchpad" -a "on gestures off info"
+complete -c rice -n "__fish_seen_subcommand_from splash" -a "off default info"
+complete -c rice -n "__fish_seen_subcommand_from lockscreen" -a "wallpaper info"
 complete -c rice -n "__fish_seen_subcommand_from preset" -a "minimal comfy heavy"
+complete -c rice -n "__fish_seen_subcommand_from profile" -a "desktop laptop info"
 FISHEOF
     ok "Fish completions zainstalowane"
 }
@@ -648,6 +993,11 @@ cmd_status() {
     cmd_desktops info
     cmd_animations info
     cmd_buttons info;      echo ""
+    cmd_nightcolor info;   echo ""
+    cmd_hotcorners info;   echo ""
+    cmd_clipboard info
+    cmd_splash info
+    cmd_lockscreen info;   echo ""
     cmd_terminal info;     echo ""
     cmd_dock list;         echo ""
 }
@@ -676,13 +1026,24 @@ cmd_help() {
     echo "    buttons     przyciski okien (mac/windows)"
     echo "    desktops    pulpity wirtualne"
     echo ""
+    echo -e "  ${CYAN}Komfort${NC}"
+    echo "    nightcolor  filtr niebieskiego swiatla"
+    echo "    hotcorners  aktywne rogi ekranu"
+    echo "    shortcuts   skroty klawiszowe"
+    echo "    clipboard   historia schowka"
+    echo "    touchpad    gesty i ustawienia touchpada"
+    echo "    splash      ekran startowy"
+    echo "    lockscreen  ekran blokady"
+    echo ""
     echo -e "  ${CYAN}Terminal${NC}"
     echo "    terminal    opacity, padding kitty"
     echo ""
     echo -e "  ${CYAN}Presety${NC}"
-    echo "    preset minimal   maly blur, male ikony, szybkie"
-    echo "    preset comfy     zbalansowany (domyslny)"
-    echo "    preset heavy     duzo efektow, duze ikony"
+    echo "    preset minimal|comfy|heavy"
+    echo ""
+    echo -e "  ${CYAN}Profile${NC}"
+    echo "    profile desktop    stacjonarny: hot corners, 4 pulpity, pelne efekty"
+    echo "    profile laptop     laptop: gesty, lekkie efekty, 3 pulpity"
     echo ""
     echo -e "  ${CYAN}System${NC}"
     echo "    restart     restart plasmashell"
@@ -698,6 +1059,8 @@ cmd_help() {
     echo "    rice panel autohide dock true"
     echo "    rice icons all 24"
     echo "    rice dock add brave-browser.desktop"
+    echo "    rice profile desktop"
+    echo "    rice nightcolor on 3500"
     echo ""
 }
 
@@ -716,7 +1079,15 @@ case "${1:-help}" in
     desktops)     shift; cmd_desktops "$@" ;;
     animations)   shift; cmd_animations "$@" ;;
     buttons)      shift; cmd_buttons "$@" ;;
+    nightcolor)   shift; cmd_nightcolor "$@" ;;
+    hotcorners)   shift; cmd_hotcorners "$@" ;;
+    shortcuts)    shift; cmd_shortcuts "$@" ;;
+    clipboard)    shift; cmd_clipboard "$@" ;;
+    splash)       shift; cmd_splash "$@" ;;
+    lockscreen)   shift; cmd_lockscreen "$@" ;;
+    touchpad)     shift; cmd_touchpad "$@" ;;
     preset)       shift; cmd_preset "$@" ;;
+    profile)      shift; cmd_profile "$@" ;;
     restart)      shift; cmd_restart ;;
     backup)       shift; cmd_backup "$@" ;;
     export)       shift; cmd_export ;;
